@@ -18,7 +18,7 @@ class Strategy(QThread):
 
         self.deposit = 0
 
-        self.order_wait = 1800  # 체결대기시간 30분
+        self.order_wait = 60  # 체결대기시간 1분
 
         self.get_universe = get_universe
         self.check_buy_signal = check_buy_signal
@@ -66,23 +66,30 @@ class Strategy(QThread):
                     continue
 
                 for idx, code in enumerate(self.universe.keys()):  # for each code in the universe
+                    print(self.deposit)
+
                     print('[{}/{}_{}]'.format(idx + 1, len(self.universe), self.universe[code]['code_name']))
                     time.sleep(0.5)
 
                     # 접수한 주문이 있는지 확인
                     if code in self.kiwoom.order.keys():
                         # 미체결시간 초과시 주문 취소
+                        print(self.kiwoom.order[code]['주문시간'])
                         if self.kiwoom.order[code]['미체결수량'] > 0 and (
-                                datetime.now() - self.kiwoom.order[code]['체결시간']).total_seconds() > self.order_wait:
-                            self.cancel_order(code)
-
-                    # 보유 종목인지 확인
-                    if code in self.kiwoom.balance.keys():
-                        # 매수
-                        self.check_sell_signal_and_order(code)
-
-                    # 매도
-                    self.check_buy_signal_and_order(code)
+                                datetime.now() - self.kiwoom.order[code]['datetime']).total_seconds() > self.order_wait:
+                            if self.kiwoom.order[code]['주문구분'] == '매수':
+                                self.cancel_buy_order(code)
+                            elif self.kiwoom.order[code]['주문구분'] == '매도':
+                                self.cancel_sell_order(code)
+                    else:  # 접수한 주문이 없을 시
+                        if code in self.kiwoom.universe_realtime_transaction_info.keys():
+                            # 보유 종목인지 확인
+                            if code in self.kiwoom.balance.keys():
+                                # 매도
+                                self.check_sell_signal_and_order(code)
+                            else:
+                                # 매수
+                                self.check_buy_signal_and_order(code)
 
             except Exception as e:
                 print(traceback.format_exc())
@@ -91,7 +98,7 @@ class Strategy(QThread):
 
     def check_and_get_universe(self):  # 유니버스 주기적으로 업데이트 하게 하는 코드 필요
         """유니버스가 존재하는지 확인하고 없으면 생성하는 함수"""
-        if (not check_table_exist(self.strategy_name, 'universe')) or datetime.today().day == 1:
+        if (not check_table_exist(self.strategy_name, 'universe')) or datetime.today().day == 0:
             universe_list = self.get_universe()
             print(universe_list)
             universe = {}
@@ -139,6 +146,7 @@ class Strategy(QThread):
 
             if check_table_exist(self.strategy_name, code):
                 if check_transaction_closed():
+                    print("장 종료 시간입니다. 데이터베이스 업데이트를 시작합니다.")
                     # 저장된 데이터의 가장 최근 일자를 조회
                     sql = "select max(`{}`) from `{}`".format('index', code)
 
@@ -153,10 +161,12 @@ class Strategy(QThread):
                     # 최근 저장 일자가 오늘이 아닌지 확인
                     if last_date[0] != now:
                         price_df = self.kiwoom.get_price_data(code)
+                        time.sleep(0.5)
                         # 코드를 테이블 이름으로 해서 데이터베이스에 저장
                         insert_df_to_db(self.strategy_name, code, price_df)
                         self.universe[code]['price_df'] = price_df
                 else:
+                    print("데이터베이스에서 일봉데이터를 불러옵니다.")
                     sql = "select * from `{}`".format(code)
                     cur = execute_sql(self.strategy_name, sql)
                     cols = [column[0] for column in cur.description]
@@ -168,12 +178,14 @@ class Strategy(QThread):
                     self.universe[code]['price_df'] = price_df
             else:
                 if check_transaction_closed():
+                    print("장 종료 시간입니다. 금일 데이터 포함 일봉 정보를 다운로드합니다.")
                     # API를 이용해 조회한 가격 데이터 price_df에 저장
                     price_df = self.kiwoom.get_price_data(code)
                     # 코드를 테이블 이름으로 해서 데이터베이스에 저장
                     insert_df_to_db(self.strategy_name, code, price_df)
                     time.sleep(0.5)
                 else:
+                    print("장 종료 시간입니다. 금일 데이터만 제외한 일봉 정보를 다운로드합니다.")
                     # API를 이용해 조회한 가격 데이터 price_df에 저장
                     price_df = self.kiwoom.get_price_data(code)
                     # 금일 데이터 제외
@@ -185,9 +197,34 @@ class Strategy(QThread):
                     insert_df_to_db(self.strategy_name, code, price_df)
                     time.sleep(0.5)
 
-    def cancel_order(self, code):
+    def cancel_buy_order(self, code):
         print('미체결 시간이 초과되어 주문이 취소됩니다')
-        pass
+
+        quantity = self.kiwoom.order[code]['주문수량']
+        bid = self.kiwoom.order[code]['주문가격']
+        origin_order_number = self.kiwoom.order[code]['원주문번호']
+
+        order_result = self.kiwoom.send_order('cancel_buy_order', '1011', 3, code, quantity, 0, '00', origin_order_number)
+
+        # LINE 메시지를 보내는 부분
+        message = "[{}]buy order cancelled. quantity:{}, bid:{}, order_result:{}, deposit:{}, get_balance_count:{}, get_buy_order_count:{}, balance_len:{}".format(
+            code, quantity, bid, order_result, self.deposit, self.get_balance_count(), self.get_buy_order_count(),
+            len(self.kiwoom.balance))
+        send_message(message, RSI_STRATEGY_MESSAGE_TOKEN)
+
+    def cancel_sell_order(self, code):
+        print('미체결 시간이 초과되어 주문이 취소됩니다')
+
+        quantity = self.kiwoom.order[code]['주문수량']
+        ask = self.kiwoom.order[code]['주문가격']
+        origin_order_number = self.kiwoom.order[code]['원주문번호']
+
+        order_result = self.kiwoom.send_order('cancel_sell_order', '1011', 4, code, quantity, 0, '00', origin_order_number)
+
+        # LINE 메시지를 보내는 부분
+        message = "[{}]sell order is cancelled. quantity:{}, ask:{}, order_result:{}".format(code, quantity, ask,
+                                                                                             order_result)
+        send_message(message, RSI_STRATEGY_MESSAGE_TOKEN)
 
     def order_buy(self, code, quantity):
         if quantity < 1:
@@ -197,11 +234,13 @@ class Strategy(QThread):
 
         # 현재 예수금에서 수수료를 곱한 실제 투입금액(주문 수량 * 주문 가격)을 제외해서 계산
         amount = quantity * bid
-        self.deposit = math.floor(self.deposit - amount * 1.00015)
+        new_deposit = math.floor(self.deposit - amount * 1.00015)
 
         # 예수금이 0보다 작아질 정도로 주문할 수는 없으므로 체크
-        if self.deposit < 0:
+        if new_deposit < 0:
             return
+        else:
+            self.deposit = new_deposit
 
         # 계산을 바탕으로 지정가 매수 주문 접수
         order_result = self.kiwoom.send_order('send_buy_order', '1001', 1, code, quantity, bid, '00')

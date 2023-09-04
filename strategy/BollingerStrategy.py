@@ -10,16 +10,17 @@ class BollingerStrategy():
     def __init__(self):
         # investment must be made proportional to the weight
         self.s = Strategy("BollingerStrategy", self.get_universe, self.check_buy_signal, self.check_sell_signal)
-        self.s.start()
 
         self.weight = {}
         self.universe_close = {}
 
-        self.invest_rate = 0.6
+        self.invest_rate = 0.7
 
         self.trade_when = True
 
         self.init()
+
+        self.s.start()
 
     def get_universe(self):
         # 크롤링 결과를 얻어옴
@@ -64,7 +65,7 @@ class BollingerStrategy():
 
     def init(self):
         for code in self.s.universe.keys():
-            self.weight[code] = 0.005
+            self.weight[code] = 1
             if code in self.s.kiwoom.universe_realtime_transaction_info.keys():
                 self.universe_close[code] = self.s.kiwoom.universe_realtime_transaction_info[code]['현재가']
 
@@ -96,35 +97,38 @@ class BollingerStrategy():
         now = datetime.now().strftime('%Y%m%d')
         df.loc[now] = today_price_data
 
+        # _______________________________Customize Alpha Ideas Here__________________________________________
+
         upper_2sd, mid_2sd, lower_2sd = talib.BBANDS(df['close'],
                                                      nbdevup=2,
                                                      nbdevdn=2,
                                                      timeperiod=20)
 
         # Update weight
-        if close > upper_2sd or close < lower_2sd:
-            self.weight[code] = (mid_2sd - close) / close
-        else:
-            self.weight[code] = 0
+        self.weight[code] = (mid_2sd[now] - close) / (mid_2sd[now] - lower_2sd[now])
 
     def get_quantity(self, code):
-        deposit = self.s.kiwoom.get_deposit()
+        deposit = self.s.deposit
+
+        if code in self.s.kiwoom.universe_realtime_transaction_info.keys():
+            self.universe_close[code] = self.s.kiwoom.universe_realtime_transaction_info[code][
+                '현재가']  # update current close price
 
         avg_close = np.mean(list(self.universe_close.values()))
 
         avg_balance_count = deposit / avg_close
 
-        self.alpha(code)  # update the weight for code
+        self.alpha(code)  # update weight
 
         normalized_weight = self.normalized_weight(code)
 
-        quantity = avg_balance_count * normalized_weight * self.invest_rate
+        quantity = int(round(np.nan_to_num(avg_balance_count * normalized_weight * self.invest_rate)))
 
         return quantity
 
     def normalized_weight(self, code):
-
-        w = np.array(self.weight.values())
+        r = list(self.weight.values())
+        w = np.array(r)
 
         w[w < 0] = 0
 
@@ -142,7 +146,9 @@ class BollingerStrategy():
             return 0
 
         optimal_quantity = self.get_quantity(code)
-        current_quantity = self.s.kiwoom.order[code]['주문수량'] + self.s.kiwoom.balance[code]['보유수량']
+        current_quantity = 0
+        if code in self.s.kiwoom.balance:
+            current_quantity = self.s.kiwoom.balance[code]['보유수량']
 
         # 이 방법으로 너무 수수료 손실이 클 경우 변화폭이 클 경우에만 거래하도록 코드 수정.
         if optimal_quantity > current_quantity and self.trade_when:
@@ -158,7 +164,7 @@ class BollingerStrategy():
             return 0
 
         optimal_quantity = self.get_quantity(code)
-        current_quantity = self.s.kiwoom.order[code]['주문수량'] + self.s.kiwoom.balance[code]['보유수량']
+        current_quantity = self.s.kiwoom.balance[code]['보유수량']
 
         if optimal_quantity < current_quantity and self.trade_when:
             return current_quantity - optimal_quantity
