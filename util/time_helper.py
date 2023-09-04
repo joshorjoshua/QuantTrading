@@ -2,10 +2,6 @@ import time
 from datetime import datetime
 
 
-def get_time():
-    now = datetime.now().time().total_seconds()
-
-
 def check_transaction_open():
     """현재 시간이 장 중인지 확인하는 함수"""
     now = datetime.now()
