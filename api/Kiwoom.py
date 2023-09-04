@@ -4,6 +4,7 @@ from PyQt5.QtCore import *
 import time
 import pandas as pd
 from util.const import *
+from datetime import datetime
 
 
 class Kiwoom(QAxWidget):
@@ -150,7 +151,6 @@ class Kiwoom(QAxWidget):
                 order_status = order_status.strip()
                 order_quantity = int(order_quantity.strip())
                 order_price = int(order_price.strip())
-
                 current_price = int(current_price.strip().lstrip('+').lstrip('-'))
                 order_type = order_type.strip().lstrip('+').lstrip('-')  # +매수,-매도처럼 +,- 제거
                 left_quantity = int(left_quantity.strip())
@@ -158,6 +158,9 @@ class Kiwoom(QAxWidget):
                 ordered_at = ordered_at.strip()
                 fee = int(fee)
                 tax = int(tax)
+
+                #datetime
+                now = datetime.now()
 
                 # code를 key값으로 한 딕셔너리 변환
                 self.order[code] = {
@@ -173,7 +176,8 @@ class Kiwoom(QAxWidget):
                     '체결량': executed_quantity,
                     '주문시간': ordered_at,
                     '당일매매수수료': fee,
-                    '당일매매세금': tax
+                    '당일매매세금': tax,
+                    'datetime': now
                 }
 
             self.tr_data = self.order
@@ -225,7 +229,7 @@ class Kiwoom(QAxWidget):
         return self.tr_data
 
     def send_order(self, rqname, screen_no, order_type, code, order_quantity, order_price, order_classification, origin_order_number=""):
-        order_result = self.dynamicCall("SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)",[rqname, screen_no, self.account_number, order_type, code, order_quantity, order_price,order_classification, origin_order_number])
+        order_result = self.dynamicCall("SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)", [rqname, screen_no, self.account_number, order_type, code, order_quantity, order_price,order_classification, origin_order_number])
         return order_result
 
     def _on_receive_msg(self, screen_no, rqname, trcode, msg):
