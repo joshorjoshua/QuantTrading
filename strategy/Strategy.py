@@ -98,7 +98,7 @@ class Strategy(QThread):
 
     def check_and_get_universe(self):  # 유니버스 주기적으로 업데이트 하게 하는 코드 필요
         """유니버스가 존재하는지 확인하고 없으면 생성하는 함수"""
-        if (not check_table_exist(self.strategy_name, 'universe')) or datetime.today().day == 0:
+        if (not check_table_exist(self.strategy_name, 'universe')) or datetime.today().day == 1:
             universe_list = self.get_universe()
             print(universe_list)
             universe = {}

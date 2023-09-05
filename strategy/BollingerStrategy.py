@@ -14,7 +14,9 @@ class BollingerStrategy():
         self.weight = {}
         self.universe_close = {}
 
-        self.invest_rate = 0.7
+        # Both of these values represent market sentiment.
+        self.investment_deposit_ratio = 0.7  # [0, 1]
+        self.investment_ratio = 0.5  # [0, 1]
 
         self.trade_when = True
 
@@ -57,7 +59,7 @@ class BollingerStrategy():
         df.reset_index(inplace=True, drop=True)
 
         # 상위 200개만 추출
-        df = df.loc[:199]
+        df = df.loc[:99]
 
         # 유니버스 생성 결과를 엑셀 출력
         df.to_excel('universe.xlsx')
@@ -99,13 +101,27 @@ class BollingerStrategy():
 
         # _______________________________Customize Alpha Ideas Here__________________________________________
 
-        upper_2sd, mid_2sd, lower_2sd = talib.BBANDS(df['close'],
-                                                     nbdevup=2,
-                                                     nbdevdn=2,
-                                                     timeperiod=20)
+        # Bollinger Bands
+        upper, mid, lower = talib.BBANDS(df['close'],
+                                         nbdevup=2,
+                                         nbdevdn=2,
+                                         timeperiod=20)
+
+        # MACD
+        macd, macd_signal, macd_hist = talib.MACD(df['close'], fastperiod=12, slowperiod=26, signalperiod=9)
+
+        # RSI
+        rsi = talib.RSI(df['close'], timeperiod=14)
+
+        # Stochastic (d is 3-day moving average of k)
+        k, d = talib.STOCH(df['high'], df['low'], df['close'], fastk_period=14, slowk_period=3, slowk_matype=0,
+                           slowd_period=3, slowd_matype=0)
+
+        # Parabolic SAR
+        sar = talib.SAR(df['high'], df['low'], accel=0.02, maximum=0.2)
 
         # Update weight
-        self.weight[code] = (mid_2sd[now] - close) / (mid_2sd[now] - lower_2sd[now])
+        self.weight[code] = (mid[now] - close) / (mid[now] - lower[now])
 
     def get_quantity(self, code):
         deposit = self.s.deposit
@@ -120,9 +136,12 @@ class BollingerStrategy():
 
         self.alpha(code)  # update weight
 
-        normalized_weight = self.normalized_weight(code)
+        nw = self.normalized_weight(code)
+        # cannot short a stock, so minimum quantity is 0
+        if nw < 0:
+            nw = 0
 
-        quantity = int(round(np.nan_to_num(avg_balance_count * normalized_weight * self.invest_rate)))
+        quantity = int(round(np.nan_to_num(avg_balance_count * nw * self.investment_deposit_ratio)))
 
         return quantity
 
@@ -130,11 +149,14 @@ class BollingerStrategy():
         r = list(self.weight.values())
         w = np.array(r)
 
-        w[w < 0] = 0
+        min = w.min()
+        max = w.max()
 
-        s = w.sum()
+        # scale every value into [0, 1]
+        ans = (self.weight[code] - min) / (max - max)
 
-        ans = self.weight[code] / s
+        # normalize
+        ans = (ans - (1 - self.investment_ratio)) / self.investment_ratio
 
         return ans
 
@@ -170,3 +192,4 @@ class BollingerStrategy():
             return current_quantity - optimal_quantity
         else:
             return 0
+
