@@ -16,6 +16,7 @@ class Strategy(QThread):
 
         self.universe = {}
 
+        self.round_deposit = 0
         self.deposit = 0
 
         self.order_wait = 60  # 체결대기시간 1분
@@ -71,6 +72,9 @@ class Strategy(QThread):
                     print('[{}/{}_{}]'.format(idx + 1, len(self.universe), self.universe[code]['code_name']))
                     time.sleep(0.5)
 
+                    if idx == 0:
+                        self.round_deposit = self.deposit
+
                     # 접수한 주문이 있는지 확인
                     if code in self.kiwoom.order.keys():
                         # 미체결시간 초과시 주문 취소
@@ -87,9 +91,8 @@ class Strategy(QThread):
                             if code in self.kiwoom.balance.keys():
                                 # 매도
                                 self.check_sell_signal_and_order(code)
-                            else:
-                                # 매수
-                                self.check_buy_signal_and_order(code)
+                            # 매수
+                            self.check_buy_signal_and_order(code)
 
             except Exception as e:
                 print(traceback.format_exc())
@@ -185,7 +188,7 @@ class Strategy(QThread):
                     insert_df_to_db(self.strategy_name, code, price_df)
                     time.sleep(0.5)
                 else:
-                    print("장 종료 시간입니다. 금일 데이터만 제외한 일봉 정보를 다운로드합니다.")
+                    print("장 종료 시간 전입니다. 금일 데이터만 제외한 일봉 정보를 다운로드합니다.")
                     # API를 이용해 조회한 가격 데이터 price_df에 저장
                     price_df = self.kiwoom.get_price_data(code)
                     # 금일 데이터 제외
@@ -257,6 +260,10 @@ class Strategy(QThread):
     def order_sell(self, code, quantity):
         if quantity < 1:
             return
+
+        # 보유수량보다 많이 팔수는 없음
+        if self.kiwoom.balance[code]['보유수량'] < quantity:
+            return self.kiwoom.balance[code]['보유수량']
 
         # 최우선 매도 호가 확인
         ask = self.kiwoom.universe_realtime_transaction_info[code]['(최우선)매도호가']

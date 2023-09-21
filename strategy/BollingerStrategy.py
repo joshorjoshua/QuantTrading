@@ -18,6 +18,8 @@ class BollingerStrategy():
         self.investment_deposit_ratio = 0.7  # [0, 1]
         self.investment_ratio = 0.5  # [0, 1]
 
+        self.stop_loss = 0.06
+
         self.trade_when = True
 
         self.init()
@@ -67,7 +69,7 @@ class BollingerStrategy():
 
     def init(self):
         for code in self.s.universe.keys():
-            self.weight[code] = 1
+            self.weight[code] = 0.5
             if code in self.s.kiwoom.universe_realtime_transaction_info.keys():
                 self.universe_close[code] = self.s.kiwoom.universe_realtime_transaction_info[code]['현재가']
 
@@ -118,42 +120,50 @@ class BollingerStrategy():
                            slowd_period=3, slowd_matype=0)
 
         # Parabolic SAR
-        sar = talib.SAR(df['high'], df['low'], accel=0.02, maximum=0.2)
+        sar = talib.SAR(df['high'], df['low'])
 
         # Update weight
         self.weight[code] = (mid[now] - close) / (mid[now] - lower[now])
 
     def get_quantity(self, code):
-        deposit = self.s.deposit
 
-        if code in self.s.kiwoom.universe_realtime_transaction_info.keys():
-            self.universe_close[code] = self.s.kiwoom.universe_realtime_transaction_info[code][
-                '현재가']  # update current close price
+        if code not in self.s.kiwoom.universe_realtime_transaction_info.keys():
+            return 0
 
-        avg_close = np.mean(list(self.universe_close.values()))
+        deposit = self.s.round_deposit
 
-        avg_balance_count = deposit / avg_close
+        # update current close price
+        self.universe_close[code] = self.s.kiwoom.universe_realtime_transaction_info[code]['현재가']
+
+        # stop loss
+        if code in self.s.kiwoom.order:
+            order = self.s.kiwoom.order[code]
+
+            if self.universe_close[code] < order['주문가격'] * (1 - self.stop_loss):
+                return 0
+
+        close = self.universe_close[code]
 
         self.alpha(code)  # update weight
 
         nw = self.normalized_weight(code)
-        # cannot short a stock, so minimum quantity is 0
-        if nw < 0:
-            nw = 0
 
-        quantity = int(round(np.nan_to_num(avg_balance_count * nw * self.investment_deposit_ratio)))
+        quantity = int(round(np.nan_to_num(deposit / (200 * self.investment_deposit_ratio) / close * nw)))
+
+        # cannot short a stock, so minimum quantity is 0
+        if quantity < 0:
+            quantity = 0
 
         return quantity
 
     def normalized_weight(self, code):
-        r = list(self.weight.values())
-        w = np.array(r)
+        w = np.array(list(self.weight.values()))
 
         min = w.min()
         max = w.max()
 
         # scale every value into [0, 1]
-        ans = (self.weight[code] - min) / (max - max)
+        ans = (self.weight[code] - min) / (max - min)
 
         # normalize
         ans = (ans - (1 - self.investment_ratio)) / self.investment_ratio
